@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><configuration>
+<property><name>odps.mapred.input.desc</name><value>[{"cols":"","tblName":"mr_wc_in","partSpec":[],"mapClass":"","projName":""}]</value></property>
+<property><name>odps.mapred.mapoutput.value.class</name><value>com.aliyun.odps.io.LongWritable</value></property>
+<property><name>odps.mapred.map.class</name><value>com.alibaba.add.WordCount$WCMapper</value></property>
+<property><name>odps.mapred.mapoutput.key.class</name><value>com.aliyun.odps.io.Text</value></property>
+<property><name>odps.mapred.output.desc</name><value>[{"tblName":"mr_wc_out","partSpec":[],"overwrite":true,"projName":"","label":""}]</value></property>
+<property><name>odps.mapred.reduce.class</name><value>com.alibaba.add.WordCount$WCReducer</value></property>
+</configuration>
