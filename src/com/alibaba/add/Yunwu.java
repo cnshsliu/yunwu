@@ -54,7 +54,11 @@ public class Yunwu {
 			// int type = Integer.parseInt(record.get(2).toString());
 			String visit_datetime = record.get(3).toString();
 			/*
-			 * Date visit_date = null; try { visit_date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH).parse(visit_datetime); } catch (ParseException e) { e.printStackTrace(); } Calendar visit_cal = Calendar.getInstance(); visit_cal.setTime(visit_date);
+			 * Date visit_date = null; try { visit_date = new
+			 * SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+			 * Locale.ENGLISH).parse(visit_datetime); } catch (ParseException e)
+			 * { e.printStackTrace(); } Calendar visit_cal =
+			 * Calendar.getInstance(); visit_cal.setTime(visit_date);
 			 */
 			userText.set(user_id);
 			infoText.set(brand_id + "///" + type + "///" + visit_datetime);
@@ -73,6 +77,12 @@ public class Yunwu {
 			result = context.createOutputRecord();
 		}
 
+		/*
+		 * (non-Javadoc)
+		 * 
+		 * @see com.aliyun.odps.mapreduce.Reducer#reduce(java.lang.Object,
+		 * java.lang.Iterable, com.aliyun.odps.mapreduce.ReduceContext)
+		 */
 		@Override
 		public void reduce(Text key, Iterable<Text> values, ReduceContext<Text, Text> context) throws IOException, InterruptedException {
 			System.out.println("Key=" + key);
@@ -81,10 +91,10 @@ public class Yunwu {
 			try {
 				Class.forName("org.h2.Driver");
 				conn = DriverManager.getConnection("jdbc:h2:mem:test");
-				String sql = "CREATE TABLE user_brand (BRAND_ID varchar(10), TYPES int, TS timestamp)";
+				String sql = "CREATE TABLE user_brand (BRAND_ID varchar(10), TYPES int, TS timestamp, AGE_M int, AGE_W int, AGE_D int, score REAL)";
 				Statement stat = conn.createStatement();
 				stat.execute(sql);
-				PreparedStatement prep = conn.prepareStatement("INSERT INTO user_brand values (?,?,?)");
+				PreparedStatement prep = conn.prepareStatement("INSERT INTO user_brand values (?,?,?,0,0,0,0.0)");
 
 				int inserted_count = 0;
 				for (Text val : values) {
@@ -111,21 +121,30 @@ public class Yunwu {
 				// 3. 时间因子计算方法
 				// 3.1 购物车时间因子：(1-（8.1-TS)/(8.1-3.31))*10
 				//
+
+				String sqlQ = "update user_brand set AGE_M=8-MONTH(TS), AGE_W = WEEK(PARSEDATETIME('2013-08-01 00:00:00', 'yyyy-MM-dd HH:mm:ss'))- WEEK(TS), AGE_D = DAY_OF_YEAR(PARSEDATETIME('2013-08-01 00:00:00', 'yyyy-MM-dd HH:mm:ss'))-DAY_OF_YEAR(TS)";
+				stat.execute(sqlQ);
+
+				sqlQ = "update user_brand set score=score + 60/(3*AGE_D) where TYPES=1";
+				stat.execute(sqlQ);
 				// 在过去一周内点击某件商品的次数超过3次，会购买该产品
-				String sqlA = "select BRAND_ID from (select BRAND_ID, count(*) as C from user_brand where TYPES= 1 and TIMESTAMPDIFF('MS', TS, PARSEDATETIME('" + refDate + "', 'yyyy-MM-dd HH:mm:ss')) < " + inOneWeek + " group by brand_id) as T where T.C >=3 ";
-				// String sqlA = "select * from  (select BRAND_ID, count(*) as C from user_brand where TYPES= 1 group by brand_id) where C>=3";
+				String sqlA = "select * from user_brand where score >=0.0 ";
+				// String sqlA =
+				// "select * from  (select BRAND_ID, count(*) as C from user_brand where TYPES= 1 group by brand_id) where C>=3";
 
 				HashMap hm = new HashMap();
 
 				ResultSet rs = stat.executeQuery(sqlA);
 				while (rs.next()) {
+					System.out.println(rs.getString("BRAND_ID") + "\t" + rs.getInt("TYPES") + "\t" + rs.getInt("AGE_M") + "\t" + rs.getInt("AGE_W") + "\t" + rs.getInt("AGE_D") + "\t" + rs.getFloat("SCORE"));
 					hm.put(rs.getString(1), "V");
 				}
 
 				//
 
 				/*
-				 * result_brand.set(rs.getString(1)); result.set(0, key); result.set(1, result_brand); context.write(result);
+				 * result_brand.set(rs.getString(1)); result.set(0, key);
+				 * result.set(1, result_brand); context.write(result);
 				 */
 				for (Iterator it = hm.keySet().iterator(); it.hasNext();) {
 					result_brand.set((String) it.next());
