@@ -217,4 +217,4 @@ pip-log.txt
 
 #ODPS
 mr_local_jobs/
-warehouse/
+attempt_mr_*

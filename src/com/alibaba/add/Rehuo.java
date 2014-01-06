@@ -33,6 +33,15 @@ public class Rehuo {
 	static int BOOKMARK = 2;
 	static int CART = 3;
 	static int FOLLOW = 4;
+	static int CART_LIVING_PERIOD = 60;
+	static int INTEREST_LIVING_PERIOD = 60;
+	static float CART_TOP_SCORE = 60.0f;
+	static float INTEREST_TOP_SCORE = 40.0f;
+	static float MUST_BUY_SCORE = 60.0f;
+	static float CLICK_TOP_SCORE = 12.0f;
+	static float NORMAL_CLICK_WEIGHT = 1.0f;
+	static int DAY_CLICK_CHECK_PERIOD = 7;
+	static int DAY_CLICK_CHECK_THRESHOLD = 3;
 
 	public static class RHMapper extends Mapper<Text, Text> {
 		static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -53,8 +62,7 @@ public class Rehuo {
 			infoText.set(brand_id + "$" + type + "$" + visit_datetime);
 			try {
 				dt.setTime(sdf.parse(visit_datetime));
-				if (dt.get(Calendar.MONTH) >= 3 && dt.get(Calendar.MONTH) <= 6)
-					context.write(userText, infoText);
+				context.write(userText, infoText);
 			} catch (ParseException e) {
 				e.printStackTrace();
 			}
@@ -73,21 +81,17 @@ public class Rehuo {
 		public Action(String brandS, String typesS, String datetimeS) throws ParseException {
 			Calendar baseT = Calendar.getInstance();
 			Calendar actionT = Calendar.getInstance();
-			baseT.setTime(sdf.parse("2013-08-01 00:00:00"));
+			baseT.setTime(sdf.parse("2013-07-03 00:00:00"));
 			brand = brandS;
 			types = Integer.valueOf(typesS).intValue();
 			actionT.setTime(sdf.parse(datetimeS));
 			ms = actionT.getTimeInMillis();
-			int tt = 0;
-			tt = baseT.get(Calendar.MONTH);
-			tt = actionT.get(Calendar.MONTH);
-			tt = baseT.get(Calendar.WEEK_OF_YEAR);
-			tt = actionT.get(Calendar.WEEK_OF_YEAR);
-			tt = baseT.get(Calendar.DAY_OF_YEAR);
-			tt = actionT.get(Calendar.DAY_OF_YEAR);
+			/*
+			 * int tt = 0; tt = baseT.get(Calendar.MONTH); tt = actionT.get(Calendar.MONTH); tt = baseT.get(Calendar.WEEK_OF_YEAR); tt = actionT.get(Calendar.WEEK_OF_YEAR); tt = baseT.get(Calendar.DAY_OF_YEAR); tt = actionT.get(Calendar.DAY_OF_YEAR);
+			 */
 			age_m = baseT.get(Calendar.MONTH) - actionT.get(Calendar.MONTH);
 			age_w = baseT.get(Calendar.WEEK_OF_YEAR) - actionT.get(Calendar.WEEK_OF_YEAR);
-			age_d = baseT.get(Calendar.DAY_OF_YEAR) - actionT.get(Calendar.DAY_OF_YEAR);
+			age_d = baseT.get(Calendar.DAY_OF_YEAR) - actionT.get(Calendar.DAY_OF_YEAR) - 1;
 
 		}
 	}
@@ -101,10 +105,24 @@ public class Rehuo {
 			result = context.createOutputRecord();
 		}
 
-		int sumArr(int[] arr) {
+		int sumArr(int[] arr, int a, int b) {
 			int ret = 0;
-			for (int i = 0; i < arr.length; i++)
-				ret += arr[i];
+			if (b > arr.length)
+				b = arr.length;
+			for (int i = 0; i < b; i++) {
+				ret += arr[a + i];
+			}
+			return ret;
+		}
+
+		int briefSumArr(int[] arr, int a, int b) {
+			int ret = 0;
+			if (b > arr.length)
+				b = arr.length;
+			for (int i = 0; i < b; i++) {
+				if (arr[a + i] > 0)
+					ret += 1;
+			}
 			return ret;
 		}
 
@@ -136,67 +154,128 @@ public class Rehuo {
 
 				int brand_selected_count = 0;
 				StringBuilder brand_selected_sb = new StringBuilder();
+				boolean everBuySomething = false;
+				boolean everInterestSomething = false;
 				for (Iterator<String> itr = brands.iterator(); itr.hasNext();) {
 					String brand = (String) itr.next();
 
-					int[] month_mark = { 0, 0, 0, 0 };
-					int[] week_mark = { 0, 0, 0, 0 };
-					int[] day_mark = { 0, 0, 0, 0, 0, 0, 0 };
+					int[] month_buy_mark = { 0, 0, 0, 0, 0 };
+					int[] week_buy_mark = { 0, 0, 0, 0, 0 };
+					int[] day_buy_mark = { 0, 0, 0, 0, 0, 0, 0 };
+					int[] month_click_mark = { 0, 0, 0, 0, 0 };
+					int[] week_click_mark = { 0, 0, 0, 0, 0 };
+					int[] day_click_mark = { 0, 0, 0, 0, 0, 0, 0 };
 					long lastCartMs = -1L;
 					long lastBuyMs = -1L;
 					long lastInterestMs = -1L;
 					int lastInterestAgeW = 1;
+					int lastInterestAgeD = -1;
 					int lastCartAgeM = 1;
-					float clickWeight = (float) 1.0;
+					int lastCartAgeD = -1;
+					float clickWeight = NORMAL_CLICK_WEIGHT;
 					float score = (float) 0.0;
+					float clickScore = (float) 0.0;
 
 					for (Iterator<Action> it = brandActions.get(brand).iterator(); it.hasNext();) {
 						Action act = (Action) it.next();
 						if (act.types == BUY) {
-							int idx = act.age_m - 1;
-							idx = (idx < 0) ? 0 : idx;
-							idx = (idx > 3) ? 3 : idx;
-							month_mark[idx] = 1;
+							month_buy_mark[act.age_m]++;
 
-							if (act.age_w < 4) {
-								week_mark[act.age_w] = 1;
+							if (act.age_w < 5) {
+								week_buy_mark[act.age_w]++;
 							}
 
-							if (act.age_d - 1 < 7) {
-								day_mark[act.age_d - 1] = 1;
+							if (act.age_d < 7) {
+								day_buy_mark[act.age_d]++;
 							}
 							lastBuyMs = act.ms > lastBuyMs ? act.ms : lastBuyMs;
-							clickWeight = (float) 1.5;
+							clickWeight = NORMAL_CLICK_WEIGHT * 1.5f;
+							everBuySomething = true;
 						} else if (act.types == CART) {
 							if (act.ms > lastCartMs) {
 								lastCartMs = act.ms;
 								lastCartAgeM = act.age_m;
+								lastCartAgeD = act.age_d;
 							}
-							clickWeight = (float) 1.5;
+							clickWeight = NORMAL_CLICK_WEIGHT * 1.5f;
+							everInterestSomething = true;
 						} else if (act.types == FOLLOW || act.types == BOOKMARK) {
 							if (act.ms > lastInterestMs) {
 								lastInterestMs = act.ms;
 								lastInterestAgeW = act.age_w;
+								lastInterestAgeD = act.age_d;
 							}
-							clickWeight = (float) 1.5;
+							clickWeight = NORMAL_CLICK_WEIGHT * 1.5f;
+							everInterestSomething = true;
 						} else if (act.types == CLICK) {
-							score += (float) ((60.0 / 5.0) * clickWeight) / (act.age_d > 0 ? act.age_d : 1);
+							month_click_mark[act.age_m]++;
+
+							if (act.age_w < 5) {
+								week_click_mark[act.age_w]++;
+							}
+
+							if (act.age_d < 7) {
+								day_click_mark[act.age_d]++;
+							}
+
+							clickScore += (float) (CLICK_TOP_SCORE * clickWeight) / (act.age_d + 1);
 						}
 					}
 
-					if (sumArr(month_mark) >= 2 || sumArr(week_mark) >= 2 || sumArr(day_mark) >= 3) {
-						score += 60.0;
-					}
-					if (lastCartMs > -1L && lastBuyMs < lastCartMs) {
-						score += 60.0 / lastCartAgeM;
-					}
-					if (lastInterestMs > -1L && lastBuyMs < lastInterestMs) {
-						score += 30.0 / (lastInterestAgeW + 1);
+					if (briefSumArr(month_buy_mark, 1, 2) == 2) {
+						if (month_buy_mark[0] < Math.min(month_buy_mark[1], month_buy_mark[2]))
+							score += MUST_BUY_SCORE;
 					}
 
-					// score += 61;
+					if (briefSumArr(week_buy_mark, 1, 2) >= 2) {
+						if (week_buy_mark[0] < Math.min(week_buy_mark[1], week_buy_mark[2]))
+							score += MUST_BUY_SCORE;
+					}
+					if (briefSumArr(day_buy_mark, 0, 3) >= 3) {
+						score += MUST_BUY_SCORE;
+					}
+					if (lastCartMs > -1L) {
+						int tmpweek = lastCartAgeD / 7;
+						if (lastCartAgeD <= CART_LIVING_PERIOD) {
+							if (lastBuyMs < lastCartMs) {
+								score += CART_TOP_SCORE / (tmpweek + 1);
+							} else if (month_buy_mark[0] < month_buy_mark[1]) {
+								score += CART_TOP_SCORE / (tmpweek + 1);
+							}
+						}
+					}
+					if (lastInterestMs > -1L) {
+						int tmpweek = lastInterestAgeD / 7;
+						if (lastInterestAgeD <= INTEREST_LIVING_PERIOD) {
+							if (lastBuyMs < lastInterestMs) {
+								score += INTEREST_TOP_SCORE / (tmpweek + 1);
+							} else if (month_buy_mark[0] < month_buy_mark[1]) {
+								score += INTEREST_TOP_SCORE / (tmpweek + 1);
+							}
+						}
+					}
 
-					if (score >= 60) {
+					for (int i = 0; i < DAY_CLICK_CHECK_PERIOD; i++) {
+						if (day_click_mark[i] >= DAY_CLICK_CHECK_THRESHOLD + i) {
+							boolean alreadyBought = false;
+							for (int j = 0; j <= i; j++) {
+								if (day_buy_mark[j] >= 1) {
+									alreadyBought = true;
+									break;
+								}
+							}
+							if (!alreadyBought) {
+								score += MUST_BUY_SCORE / (i + 1);
+								if (score >= MUST_BUY_SCORE) {
+									break;
+								}
+							}
+						}
+					}
+
+					score += clickScore;
+
+					if (score >= MUST_BUY_SCORE) {
 						if (brand_selected_count > 0) {
 							brand_selected_sb.append(",");
 						}
@@ -205,12 +284,9 @@ public class Rehuo {
 					}
 				}
 
-				if (brand_selected_count > 0) {
+				if (brand_selected_count > 0 && (everBuySomething || everInterestSomething)) {
 					Text result_brand = new Text();
-					String resText = brand_selected_sb.toString();
-					if (resText.length() > 100)
-						System.err.println("Warning, result too long");
-					result_brand.set(resText);
+					result_brand.set(brand_selected_sb.toString());
 					result.set(0, key);
 					result.set(1, result_brand);
 					context.write(result);
