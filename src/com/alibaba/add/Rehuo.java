@@ -35,6 +35,8 @@ public class Rehuo {
 	static int FOLLOW = 4;
 	static int CART_LIVING_PERIOD = 60;
 	static int INTEREST_LIVING_PERIOD = 60;
+	static int CART_LIVING_WEEK = 8;
+	static int INTEREST_LIVING_WEEK = 8;
 	static float CART_TOP_SCORE = 60.0f;
 	static float INTEREST_TOP_SCORE = 40.0f;
 	static float MUST_BUY_SCORE = 60.0f;
@@ -42,9 +44,10 @@ public class Rehuo {
 	static float NORMAL_CLICK_WEIGHT = 1.0f;
 	static int DAY_CLICK_CHECK_PERIOD = 7;
 	static int DAY_CLICK_CHECK_THRESHOLD = 3;
+	static long ms_24_hours = 86400000L;
+	static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
 	public static class RHMapper extends Mapper<Text, Text> {
-		static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		private Text userText = new Text();
 		private Text infoText = new Text();
 
@@ -70,13 +73,13 @@ public class Rehuo {
 	}
 
 	public static class Action {
-		static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 		String brand = null;
 		int types = -1;
 		long ms = 0L;
 		int age_m = -1;
 		int age_w = -1;
 		int age_d = -1;
+		long age_ms = -1;
 
 		public Action(String brandS, String typesS, String datetimeS) throws ParseException {
 			Calendar baseT = Calendar.getInstance();
@@ -92,6 +95,7 @@ public class Rehuo {
 			age_m = baseT.get(Calendar.MONTH) - actionT.get(Calendar.MONTH);
 			age_w = baseT.get(Calendar.WEEK_OF_YEAR) - actionT.get(Calendar.WEEK_OF_YEAR);
 			age_d = baseT.get(Calendar.DAY_OF_YEAR) - actionT.get(Calendar.DAY_OF_YEAR) - 1;
+			age_ms = baseT.getTimeInMillis() - actionT.getTimeInMillis();
 
 		}
 	}
@@ -126,6 +130,56 @@ public class Rehuo {
 			return ret;
 		}
 
+		boolean everHappen(int[] arr, int a, int b) {
+			boolean ret = false;
+			b = (b > arr.length ? arr.length : b);
+			for (int i = 0; i < b; i++) {
+				if (arr[a + i] > 0) {
+					ret = true;
+					break;
+				}
+			}
+			return ret;
+		}
+
+		float average(int[] arr, int a, int b) {
+			int amount = 0;
+			b = (b > arr.length ? arr.length : b);
+			for (int i = 0; i < b; i++) {
+				amount += arr[a + i];
+			}
+			return ((float) amount / (float) b);
+		}
+
+		int min(int[] arr, int a, int b) {
+			int ret = arr[a];
+			b = (b > arr.length ? arr.length : b);
+			for (int i = 0; i < b; i++) {
+				ret = (ret > arr[a + i] ? arr[a + i] : ret);
+			}
+			return ret;
+		}
+
+		int minWithout0(int[] arr, int a, int b) {
+			int ret = arr[a];
+			b = (b > arr.length ? arr.length : b);
+			for (int i = 0; i < b; i++) {
+				if (arr[a + i] == 0)
+					continue;
+				ret = (ret > arr[a + i] ? arr[a + i] : ret);
+			}
+			return ret;
+		}
+
+		int max(int[] arr, int a, int b) {
+			int ret = arr[a];
+			b = (b > arr.length ? arr.length : b);
+			for (int i = 0; i < b; i++) {
+				ret = (ret < arr[a + i] ? arr[a + i] : ret);
+			}
+			return ret;
+		}
+
 		/*
 		 * (non-Javadoc)
 		 * 
@@ -133,10 +187,13 @@ public class Rehuo {
 		 */
 		@Override
 		public void reduce(Text key, Iterable<Text> values, ReduceContext<Text, Text> context) throws IOException, InterruptedException {
-
+			Calendar t0702 = Calendar.getInstance();
+			long l0702 = 0L;
 			Set<String> brands = new HashSet<String>();
 			Map<String, Vector<Action>> brandActions = new HashMap<String, Vector<Action>>();
 			try {
+				t0702.setTime(sdf.parse("2013-07-01 12:00:00"));
+				l0702 = t0702.getTimeInMillis();
 				for (Text val : values) {
 					String infoString = val.toString();
 					StringTokenizer st = new StringTokenizer(infoString, "$");
@@ -152,6 +209,33 @@ public class Rehuo {
 					}
 				}
 
+				// 找出用户购买前的平均点击次数。
+				int clickTotal = 0;
+				int clickTimes = 0;
+				int minClickBeforeBuy = 1;
+				for (Iterator<String> itr = brands.iterator(); itr.hasNext();) {
+					String brand = (String) itr.next();
+					for (Iterator<Action> it = brandActions.get(brand).iterator(); it.hasNext();) {
+						Action act = (Action) it.next();
+						if (act.types == BUY) {
+							int clickCount = 0;
+							for (Iterator<Action> it2 = brandActions.get(brand).iterator(); it2.hasNext();) {
+								Action act2 = (Action) it2.next();
+								if (act2.types == CLICK && (act2.ms <= act.ms && act2.ms >= act.ms - 43200000)) { // 12小时
+									clickCount++;
+								}
+							}
+							if (clickCount > 0) {
+								clickTimes++;
+								clickTotal += clickCount;
+								minClickBeforeBuy = minClickBeforeBuy > clickCount ? clickCount : minClickBeforeBuy;
+							}
+						}
+					}
+				}
+
+				int averageClickBeforeBuy = clickTotal / clickTimes;
+
 				int brand_selected_count = 0;
 				StringBuilder brand_selected_sb = new StringBuilder();
 				boolean everBuySomething = false;
@@ -160,11 +244,15 @@ public class Rehuo {
 					String brand = (String) itr.next();
 
 					int[] month_buy_mark = { 0, 0, 0, 0, 0 };
+					int[] month_interest_mark = { 0, 0, 0, 0, 0 };
+					int[] month_cart_mark = { 0, 0, 0, 0, 0 };
 					int[] week_buy_mark = { 0, 0, 0, 0, 0 };
 					int[] day_buy_mark = { 0, 0, 0, 0, 0, 0, 0 };
 					int[] month_click_mark = { 0, 0, 0, 0, 0 };
 					int[] week_click_mark = { 0, 0, 0, 0, 0 };
 					int[] day_click_mark = { 0, 0, 0, 0, 0, 0, 0 };
+					int buy_in_last12 = 0;
+					int click_in_last12 = 0;
 					long lastCartMs = -1L;
 					long lastBuyMs = -1L;
 					long lastInterestMs = -1L;
@@ -191,7 +279,12 @@ public class Rehuo {
 							lastBuyMs = act.ms > lastBuyMs ? act.ms : lastBuyMs;
 							clickWeight = NORMAL_CLICK_WEIGHT * 1.5f;
 							everBuySomething = true;
+							if (act.ms >= l0702) {
+								buy_in_last12++;
+							}
+
 						} else if (act.types == CART) {
+							month_cart_mark[act.age_m]++;
 							if (act.ms > lastCartMs) {
 								lastCartMs = act.ms;
 								lastCartAgeM = act.age_m;
@@ -200,6 +293,7 @@ public class Rehuo {
 							clickWeight = NORMAL_CLICK_WEIGHT * 1.5f;
 							everInterestSomething = true;
 						} else if (act.types == FOLLOW || act.types == BOOKMARK) {
+							month_interest_mark[act.age_m]++;
 							if (act.ms > lastInterestMs) {
 								lastInterestMs = act.ms;
 								lastInterestAgeW = act.age_w;
@@ -219,6 +313,9 @@ public class Rehuo {
 							}
 
 							clickScore += (float) (CLICK_TOP_SCORE * clickWeight) / (act.age_d + 1);
+							if (act.ms >= l0702) {
+								click_in_last12++;
+							}
 						}
 					}
 
@@ -236,21 +333,21 @@ public class Rehuo {
 					}
 					if (lastCartMs > -1L) {
 						int tmpweek = lastCartAgeD / 7;
-						if (lastCartAgeD <= CART_LIVING_PERIOD) {
-							if (lastBuyMs < lastCartMs) {
-								score += CART_TOP_SCORE / (tmpweek + 1);
+						if (tmpweek <= CART_LIVING_WEEK) {
+							if (lastBuyMs < lastCartMs) { // 加车后没买过
+								score += CART_TOP_SCORE / (1.0f + 1.0f / CART_LIVING_WEEK * tmpweek);
 							} else if (month_buy_mark[0] < month_buy_mark[1]) {
-								score += CART_TOP_SCORE / (tmpweek + 1);
+								score += CART_TOP_SCORE / (1.0f + 1.0f / CART_LIVING_WEEK * tmpweek);
 							}
 						}
 					}
 					if (lastInterestMs > -1L) {
 						int tmpweek = lastInterestAgeD / 7;
-						if (lastInterestAgeD <= INTEREST_LIVING_PERIOD) {
+						if (tmpweek <= INTEREST_LIVING_WEEK) {
 							if (lastBuyMs < lastInterestMs) {
-								score += INTEREST_TOP_SCORE / (tmpweek + 1);
+								score += INTEREST_TOP_SCORE / (1.0f + 1.0f / INTEREST_LIVING_WEEK * tmpweek);
 							} else if (month_buy_mark[0] < month_buy_mark[1]) {
-								score += INTEREST_TOP_SCORE / (tmpweek + 1);
+								score += INTEREST_TOP_SCORE / (1.0f + 1.0f / INTEREST_LIVING_WEEK * tmpweek);
 							}
 						}
 					}
@@ -273,6 +370,38 @@ public class Rehuo {
 						}
 					}
 
+					// 曾经买过的，如果6月份有点，则还会买
+					if (briefSumArr(month_buy_mark, 1, 4) > 2) {
+						if (month_buy_mark[0] < minWithout0(month_buy_mark, 1, 4))
+							score += MUST_BUY_SCORE;
+					}
+
+					// 6原份关注过但6月份没有买的，7月份会买
+					if (month_interest_mark[1] > 0) {
+						if (briefSumArr(month_buy_mark, 0, 2) == 0) {
+							score += MUST_BUY_SCORE;
+						}
+					}
+
+					// 找出用户点击到购买的操作习惯
+					if (day_click_mark[0] >= averageClickBeforeBuy && day_buy_mark[0] == 0) {
+						score += MUST_BUY_SCORE;
+					}
+					if (day_click_mark[1] > averageClickBeforeBuy && day_buy_mark[0] == 0) {
+						score += MUST_BUY_SCORE;
+					}
+					if (click_in_last12 >= averageClickBeforeBuy && buy_in_last12 == 0) {
+						score += MUST_BUY_SCORE;
+					}
+					// 六，七月份的interest, 7月份没买的，都买掉。
+					// todo: 后续优化，看用户interest到buy的转化率
+					if (month_interest_mark[0] > 0 && month_buy_mark[0] == 0) {
+						score += MUST_BUY_SCORE;
+					}
+					if (month_interest_mark[1] > 0 && sumArr(month_buy_mark, 0, 2) == 0) {
+						score += MUST_BUY_SCORE;
+					}
+
 					score += clickScore;
 
 					if (score >= MUST_BUY_SCORE) {
@@ -282,6 +411,7 @@ public class Rehuo {
 						brand_selected_sb.append(brand);
 						brand_selected_count++;
 					}
+
 				}
 
 				if (brand_selected_count > 0 && (everBuySomething || everInterestSomething)) {
